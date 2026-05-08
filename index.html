@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>EchoPlayer Pro | Shadowing Tool</title>
-    <link rel="stylesheet" href="assets/index.css?v=1.2">
+    <link rel="stylesheet" href="assets/index.css?v=1.32">
 </head>
 <body>
 
@@ -42,7 +42,7 @@
     <div class="controls-grid">
         <div class="control-group">
             <h3>🔄 Setup Loop</h3>
-            <div class="btn-group-row">
+            <div class="btn-group-row btn-group-row-4">
                 <button class="btn" id="btnSetStart">Set [A]</button>
                 <button class="btn" id="btnSetEnd">Set [B]</button>
                 <button class="btn success" id="btnToggleLoop">Loop OFF</button>
@@ -59,24 +59,38 @@
 
         <div class="control-group">
             <h3>💬 Subtitles & Tools</h3>
-            <select id="subSelector" style="width: 100%; padding: 5px; margin-bottom: 10px;">
-                <option value="none">No Subtitles</option>
-                <option value="en" selected>English</option>
-                <option value="bilingual">Bilingual</option>
-            </select>
-            <div class="btn-group-row">
-                <button class="btn secondary" id="btnMinus">-1 Sec</button>
-                <button class="btn secondary" id="btnPlus">+1 Sec</button>
-                <button class="btn secondary" id="btnBlindMode">👁️ Blind Mode</button>
+            <div id="sentenceControlPlaceholder">
+                <div id="sentenceControlWrapper">
+                    <div class="btn-group-row btn-group-row-3" style="margin-bottom: 0;">
+                        <button class="btn secondary" id="btnPrevSentence">⏮️ Prev</button>
+                        <button class="btn" id="btnRepeatSentence">🔁 Loop</button>
+                        <button class="btn secondary" id="btnNextSentence">Next ⏭️</button>
+                    </div>
+                </div>
             </div>
-            <div style="margin-top: 10px;">
-                Speed:
-                <select id="speedSelector">
-                    <option value="1.0">1.0x</option>
-                    <option value="0.9">0.9x</option>
-                    <option value="0.8">0.8x</option>
-                    <option value="0.75">0.75x</option>
+
+            <div style="border-top: 1px solid #ddd; margin-top: 10px; padding-top: 10px;">
+                <select id="subSelector" style="width: 100%; padding: 5px; margin-bottom: 10px;">
+                    <option value="none">No Subtitles</option>
+                    <option value="en" selected>English</option>
+                    <option value="bilingual">Bilingual</option>
                 </select>
+                <div class="btn-group-row btn-group-row-3">
+                    <button class="btn secondary" id="btnMinus">-1 Sec</button>
+                    <button class="btn secondary" id="btnPlus">+1 Sec</button>
+                    <button class="btn secondary" id="btnBlindMode">👁️ Blind Mode</button>
+                </div>
+                <div style="margin-top: 10px; margin-bottom: 5px;">
+                    Speed:
+                    <select id="speedSelector">
+                        <option value="1.0">1.0x</option>
+                        <option value="0.9">0.9x</option>
+                        <option value="0.8">0.8x</option>
+                        <option value="0.7">0.7x</option>
+                        <option value="0.5">0.5x</option>
+                        <option value="0.3">0.3x</option>
+                    </select>
+                </div>
             </div>
         </div>
     </div>
@@ -97,6 +111,9 @@
     let subChunks = [];
     let currentSubChunkIndex = -1;
     let isSubChunkMode = false;
+    // Sentence Mode State
+    let isSentenceLooping = false;
+    let preSentenceState = { start: -1, end: -1, isLooping: false };
 
     // --- SRT Parsing Logic ---
     function parseSrtToArray(srtText) {
@@ -456,6 +473,109 @@
                 break;
         }
     });
+    // --- Sentence Intensive Logic ---
+
+    function getCurrentSubtitleIndex() {
+        const time = player.currentTime;
+        return currentSubtitles.findIndex(s => time >= s.start && time <= s.end);
+    }
+
+    function jumpToSentence(index) {
+        if (index < 0 || index >= currentSubtitles.length) return;
+
+        player.currentTime = currentSubtitles[index].start;
+
+        if (isSentenceLooping) {
+            loopStart = currentSubtitles[index].start;
+            loopEnd = currentSubtitles[index].end;
+            updateLoopInputs();
+        }
+    }
+
+    function applySentenceLoop(index) {
+        if (index < 0 || index >= currentSubtitles.length) return;
+        const sub = currentSubtitles[index];
+
+        loopStart = sub.start;
+        loopEnd = sub.end;
+        updateLoopInputs();
+
+        player.currentTime = loopStart;
+        player.play();
+
+        isLooping = true;
+        const loopBtn = document.getElementById('btnToggleLoop');
+        loopBtn.innerText = "Loop ON";
+        loopBtn.style.background = "#dc3545";
+    }
+
+    document.getElementById('btnPrevSentence').onclick = () => {
+        let idx = getCurrentSubtitleIndex();
+        const time = player.currentTime;
+        if (idx !== -1) {
+            if (idx > 0) {
+                jumpToSentence(idx - 1);
+            } else {
+                jumpToSentence(0);
+            }
+        } else {
+            let prevIdx = currentSubtitles.findLastIndex(s => s.end < time);
+            if(prevIdx !== -1) jumpToSentence(prevIdx);
+        }
+    };
+
+    document.getElementById('btnNextSentence').onclick = () => {
+        let idx = getCurrentSubtitleIndex();
+        if (idx !== -1 && idx < currentSubtitles.length - 1) {
+            jumpToSentence(idx + 1);
+        } else if (idx === -1) {
+            let nextIdx = currentSubtitles.findIndex(s => s.start > time);
+            if(nextIdx !== -1) jumpToSentence(nextIdx);
+        }
+    };
+
+    document.getElementById('btnRepeatSentence').onclick = function() {
+        const btn = this;
+        if (!isSentenceLooping) {
+            let idx = getCurrentSubtitleIndex();
+            if (idx === -1) return;
+
+            preSentenceState = { start: loopStart, end: loopEnd, isLooping: isLooping };
+            isSentenceLooping = true;
+            btn.innerText = "Exit Loop";
+            btn.className = "btn warning";
+
+            applySentenceLoop(idx);
+        } else {
+            isSentenceLooping = false;
+            btn.innerText = "🔁 Loop";
+            btn.className = "btn";
+
+            loopStart = preSentenceState.start;
+            loopEnd = preSentenceState.end;
+            isLooping = preSentenceState.isLooping;
+
+            const loopBtn = document.getElementById('btnToggleLoop');
+            loopBtn.innerText = isLooping ? "Loop ON" : "Loop OFF";
+            loopBtn.style.background = isLooping ? "#dc3545" : "#28a745";
+            updateLoopInputs();
+        }
+    };
+
+    const sentenceWrapper = document.getElementById('sentenceControlWrapper');
+    const sentencePlaceholder = document.getElementById('sentenceControlPlaceholder');
+
+    if (sentenceWrapper && sentencePlaceholder) {
+        const observer = new IntersectionObserver((entries) => {
+            const entry = entries[0];
+            if (!entry.isIntersecting && entry.boundingClientRect.top > 0) {
+                sentenceWrapper.classList.add('floating-bottom-bar');
+            } else {
+                sentenceWrapper.classList.remove('floating-bottom-bar');
+            }
+        }, { threshold: 0 });
+        observer.observe(sentencePlaceholder);
+    }
 
     window.onload = initApp;
 </script>
