@@ -24,6 +24,14 @@
             <strong>📍 Active Segment:</strong> <span id="savedTimeTxt">--:--</span>
         </div>
         <div id="subChunkControls" style="display: none; align-items: center; gap: 10px; justify-content: center; flex-wrap: wrap;">
+            <select id="subChunkDuration" class="btn secondary btn-sm" style="margin: 0; padding: 4px; border-radius: 4px; border: 1px solid #ccc; background: white; color: #333;">
+                <option value="10">10s</option>
+                <option value="15">15s</option>
+                <option value="20">20s</option>
+                <option value="30" selected>30s</option>
+                <option value="45">45s</option>
+                <option value="60">60s</option>
+            </select>
             <button class="btn secondary btn-sm" id="btnToggleSubMode" style="margin: 0;">🧩 Micro-Loop: OFF</button>
             <div id="subChunkNav" class="status-center" style="display: none; margin: 0; padding: 4px 15px;">
                 <span id="subChunkInfo" style="color: #28a745; font-weight: bold; font-size: 13px;">0 / 0</span>
@@ -118,7 +126,7 @@
     // --- SRT Parsing Logic ---
     function parseSrtToArray(srtText) {
         const subs = [];
-        const regex = /(\d{2}:\d{2}:\d{2},\d{3}) --> (\d{2}:\d{2}:\d{2},\d{3})/g;
+        const regex = /(\d{2}:\d{2}:\d{2}[.,]\d{3}) --> (\d{2}:\d{2}:\d{2}[.,]\d{3})/g;
         let match;
         while ((match = regex.exec(srtText)) !== null) {
             subs.push({
@@ -138,16 +146,16 @@
     function generateSubChunksFromSaved(rangeStart, rangeEnd) {
         subChunks = [];
         const relevantSubs = currentSubtitles.filter(s => s.start >= rangeStart && s.end <= rangeEnd);
+        const targetDuration = parseInt(document.getElementById('subChunkDuration').value, 10) || 30;
 
         if (relevantSubs.length === 0) {
-            for (let t = rangeStart; t < rangeEnd; t += 30) {
-                subChunks.push({ start: t, end: Math.min(t + 30, rangeEnd) });
+            for (let t = rangeStart; t < rangeEnd; t += targetDuration) {
+                subChunks.push({ start: t, end: Math.min(t + targetDuration, rangeEnd) });
             }
         } else {
             let chunkStart = rangeStart;
-            const TARGET = 30;
             for (let i = 0; i < relevantSubs.length; i++) {
-                if (relevantSubs[i].end - chunkStart >= TARGET || i === relevantSubs.length - 1) {
+                if (relevantSubs[i].end - chunkStart >= targetDuration || i === relevantSubs.length - 1) {
                     subChunks.push({ start: chunkStart, end: relevantSubs[i].end });
                     if (i < relevantSubs.length - 1) chunkStart = relevantSubs[i+1].start;
                 }
@@ -286,7 +294,7 @@
 
     function addRemoteTrack(url, lang, label) {
         fetch(url).then(r => r.text()).then(text => {
-            if (lang === 'en') {
+            if (lang === 'en' || currentSubtitles.length === 0) {
                 currentSubtitles = parseSrtToArray(text);
             }
             const track = document.createElement('track');
@@ -360,7 +368,7 @@
 
     player.addEventListener('timeupdate', () => {
         if (isLooping && player.currentTime >= loopEnd && loopEnd > 0) {
-            player.currentTime = loopStart;
+            player.currentTime = loopStart + 0.01;
             player.play();
         }
     });
@@ -441,6 +449,16 @@
         }
     });
 
+    document.getElementById('subChunkDuration').addEventListener('change', () => {
+        if (currentEpKey && savedSegments[currentEpKey]) {
+            const data = savedSegments[currentEpKey];
+            generateSubChunksFromSaved(data.start, data.end);
+            if (isSubChunkMode) {
+                applySubChunk();
+            }
+        }
+    });
+
     // --- Utilities & Hotkeys ---
     document.getElementById('btnMinus').addEventListener('click', () => player.currentTime = Math.max(0, player.currentTime - 1));
     document.getElementById('btnPlus').addEventListener('click', () => player.currentTime += 1);
@@ -483,7 +501,7 @@
     function jumpToSentence(index) {
         if (index < 0 || index >= currentSubtitles.length) return;
 
-        player.currentTime = currentSubtitles[index].start;
+        player.currentTime = currentSubtitles[index].start + 0.01;
 
         if (isSentenceLooping) {
             loopStart = currentSubtitles[index].start;
@@ -500,7 +518,7 @@
         loopEnd = sub.end;
         updateLoopInputs();
 
-        player.currentTime = loopStart;
+        player.currentTime = loopStart + 0.01;
         player.play();
 
         isLooping = true;

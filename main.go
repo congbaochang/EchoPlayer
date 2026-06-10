@@ -25,6 +25,7 @@ var videoConfigs = []DirConfig{
 	{Path: `F:\baidunetdisk\young sheldon\Young.Sheldon.S02`, Alias: "Young Sheldon S02"},
 	{Path: `F:\baidunetdisk\young sheldon\Young.Sheldon.S03`, Alias: "Young Sheldon S03"},
 	{Path: `F:\baidunetdisk\S01`, Alias: "Modern Family S01"},
+	{Path: `F:\baidunetdisk\IELTS`, Alias: "IELTS"},
 }
 
 // Episode represents a single video episode with its associated subtitle files.
@@ -118,7 +119,9 @@ func listVideosHandler(w http.ResponseWriter, r *http.Request) {
 				fileNames = append(fileNames, f.Name())
 			}
 		}
-		sort.Strings(fileNames)
+		sort.Slice(fileNames, func(i, j int) bool {
+			return padNumbers(fileNames[i]) < padNumbers(fileNames[j])
+		})
 
 		tempMap := make(map[string]*Episode)
 		var keys []string
@@ -176,5 +179,13 @@ func corsMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		next.ServeHTTP(w, r)
+	})
+}
+
+var numRegex = regexp.MustCompile(`\d+`)
+
+func padNumbers(s string) string {
+	return numRegex.ReplaceAllStringFunc(s, func(m string) string {
+		return fmt.Sprintf("%06s", m)
 	})
 }
