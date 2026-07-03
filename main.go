@@ -26,6 +26,8 @@ var videoConfigs = []DirConfig{
 	{Path: `F:\baidunetdisk\young sheldon\Young.Sheldon.S03`, Alias: "Young Sheldon S03"},
 	{Path: `F:\baidunetdisk\S01`, Alias: "Modern Family S01"},
 	{Path: `F:\baidunetdisk\IELTS`, Alias: "IELTS"},
+	{Path: `F:\baidunetdisk\PTE\mp4`, Alias: "PTE"},
+	{Path: `F:\baidunetdisk\OutDaughtered\handled`, Alias: "OutDaughtered"},
 }
 
 // Episode represents a single video episode with its associated subtitle files.
@@ -131,6 +133,9 @@ func listVideosHandler(w http.ResponseWriter, r *http.Request) {
 			rawKey := extractKey(name)
 			if rawKey == "" {
 				rawKey = strings.TrimSuffix(name, filepath.Ext(name))
+				if strings.HasSuffix(strings.ToLower(rawKey), "-en") {
+					rawKey = rawKey[:len(rawKey)-3]
+				}
 			}
 
 			fullKey := config.Alias + " " + rawKey

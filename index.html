@@ -20,8 +20,11 @@
     <video id="player" controls playsinline></video>
 
     <div id="intensiveDashboard" class="shadowing-dashboard" style="display: none;">
-        <div class="status-left">
-            <strong>📍 Active Segment:</strong> <span id="savedTimeTxt">--:--</span>
+        <div class="status-left" style="display: flex; align-items: center; gap: 5px;">
+            <strong>📍 Saved Segments:</strong>
+            <select id="savedSegmentsSelect" class="btn secondary btn-sm" style="margin: 0; padding: 4px; border-radius: 4px; border: 1px solid #ccc; background: white; color: #333; max-width: 150px; cursor: pointer;">
+            </select>
+            <button id="btnDeleteSegment" class="btn secondary btn-sm" style="margin: 0; padding: 4px 8px;" title="Delete current segment">🗑️</button>
         </div>
         <div id="subChunkControls" style="display: none; align-items: center; gap: 10px; justify-content: center; flex-wrap: wrap;">
             <select id="subChunkDuration" class="btn secondary btn-sm" style="margin: 0; padding: 4px; border-radius: 4px; border: 1px solid #ccc; background: white; color: #333;">
@@ -156,8 +159,9 @@
             let chunkStart = rangeStart;
             for (let i = 0; i < relevantSubs.length; i++) {
                 if (relevantSubs[i].end - chunkStart >= targetDuration || i === relevantSubs.length - 1) {
-                    subChunks.push({ start: chunkStart, end: relevantSubs[i].end });
-                    if (i < relevantSubs.length - 1) chunkStart = relevantSubs[i+1].start;
+                    let chunkEnd = (i === relevantSubs.length - 1) ? rangeEnd : relevantSubs[i].end;
+                    subChunks.push({ start: chunkStart, end: chunkEnd });
+                    chunkStart = chunkEnd;
                 }
             }
         }
@@ -210,7 +214,15 @@
         statusTxt.innerText = "⏳ Synchronizing with Server...";
         try {
             const dataRes = await fetch('/api/segments/get');
-            savedSegments = await dataRes.json();
+            const rawSegments = await dataRes.json();
+            savedSegments = {};
+            for (let key in rawSegments) {
+                if (Array.isArray(rawSegments[key])) {
+                    savedSegments[key] = rawSegments[key];
+                } else if (rawSegments[key] && typeof rawSegments[key] === 'object') {
+                    savedSegments[key] = [rawSegments[key]];
+                }
+            }
             const listRes = await fetch('/api/list');
             const categories = await listRes.json();
             renderPlaylist(categories);
@@ -255,8 +267,9 @@
                 const div = document.createElement('div');
                 div.className = 'ep-item';
                 div.id = 'ep-' + ep.key.replace(/[^a-zA-Z0-9]/g, '-');
-                const hasSave = savedSegments[ep.key];
-                const badgeHtml = hasSave ? `<span class="badge">Has Save</span>` : '';
+                const segs = savedSegments[ep.key];
+                const hasSave = segs && segs.length > 0;
+                const badgeHtml = hasSave ? `<span class="badge">${segs.length} Save${segs.length > 1 ? 's' : ''}</span>` : '';
                 div.innerHTML = `<span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">🎬 ${ep.key}</span>${badgeHtml}`;
 
                 div.onclick = (e) => {
@@ -285,14 +298,15 @@
         currentSubtitles = [];
         document.getElementById('subChunkControls').style.display = 'none';
 
-        if (ep.enSrt) addRemoteTrack(ep.enSrt, 'en', 'English');
-        if (ep.cnSrt) addRemoteTrack(ep.cnSrt, 'zh', 'Bilingual');
+        const isIelts = ep.key.includes('雅思') || (ep.video && ep.video.includes('雅思'));
+        if (ep.enSrt) addRemoteTrack(ep.enSrt, 'en', 'English', isIelts);
+        if (ep.cnSrt) addRemoteTrack(ep.cnSrt, 'zh', 'Bilingual', isIelts);
 
         player.play();
         setTimeout(applySubtitleSelection, 300);
     }
 
-    function addRemoteTrack(url, lang, label) {
+    function addRemoteTrack(url, lang, label, isIelts) {
         fetch(url).then(r => r.text()).then(text => {
             if (lang === 'en' || currentSubtitles.length === 0) {
                 currentSubtitles = parseSrtToArray(text);
@@ -301,15 +315,19 @@
             track.kind = 'subtitles';
             track.srclang = lang;
             track.label = label;
-            track.src = srtToVtt(text);
+            track.src = srtToVtt(text, isIelts);
             player.appendChild(track);
         });
     }
 
-    function srtToVtt(srtText) {
+    function srtToVtt(srtText, isIelts) {
         let vttText = "WEBVTT\n\n";
         let processedText = srtText.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2');
         processedText = processedText.replace(/\{[^}]+\}/g, '');
+        if (isIelts) {
+            // Append invisible blank lines to push text upwards while preserving native wrapping
+            processedText = processedText.replace(/\r?\n\r?\n/g, '\n&nbsp;\n&nbsp;\n&nbsp;\n\n');
+        }
         vttText += processedText;
         return URL.createObjectURL(new Blob([vttText], { type: 'text/vtt' }));
     }
@@ -376,11 +394,25 @@
     // --- Data Persistence UI ---
     function checkSavedSegmentUI() {
         const dashboard = document.getElementById('intensiveDashboard');
-        const timeTxt = document.getElementById('savedTimeTxt');
+        const selectBox = document.getElementById('savedSegmentsSelect');
 
-        if (currentEpKey && savedSegments[currentEpKey]) {
+        if (currentEpKey && savedSegments[currentEpKey] && savedSegments[currentEpKey].length > 0) {
             dashboard.style.display = 'flex'; // Changed to flex for horizontal layout
-            timeTxt.innerText = `${formatTime(savedSegments[currentEpKey].start)} to ${formatTime(savedSegments[currentEpKey].end)}`;
+            
+            // Retain selected index if possible
+            const prevSelectedIndex = selectBox.selectedIndex;
+            
+            selectBox.innerHTML = '';
+            savedSegments[currentEpKey].forEach((seg, index) => {
+                const opt = document.createElement('option');
+                opt.value = index;
+                opt.innerText = `Seg ${index + 1}: ${formatTime(seg.start)} - ${formatTime(seg.end)}`;
+                selectBox.appendChild(opt);
+            });
+            
+            if (prevSelectedIndex >= 0 && prevSelectedIndex < selectBox.options.length) {
+                selectBox.selectedIndex = prevSelectedIndex;
+            }
         } else {
             dashboard.style.display = 'none';
         }
@@ -388,20 +420,86 @@
 
     document.getElementById('btnSaveSegment').onclick = async () => {
         if (!currentEpKey || loopStart < 0 || loopEnd < 0) return;
-        savedSegments[currentEpKey] = { start: loopStart, end: loopEnd };
+        if (!savedSegments[currentEpKey]) {
+            savedSegments[currentEpKey] = [];
+        }
+        
+        // Prevent duplicate saves
+        const exists = savedSegments[currentEpKey].some(s => Math.abs(s.start - loopStart) < 0.1 && Math.abs(s.end - loopEnd) < 0.1);
+        if (exists) return;
+        
+        savedSegments[currentEpKey].push({ start: loopStart, end: loopEnd });
         await syncToServer();
-        checkSavedSegmentUI();
-
+        
         const safeId = 'ep-' + currentEpKey.replace(/[^a-zA-Z0-9]/g, '-');
         const itemUI = document.getElementById(safeId);
-        if (itemUI && !itemUI.innerHTML.includes('Has Save')) {
-            itemUI.innerHTML += `<span class="badge">Has Save</span>`;
+        if (itemUI) {
+            const badge = itemUI.querySelector('.badge');
+            const segCount = savedSegments[currentEpKey].length;
+            const badgeText = `${segCount} Save${segCount > 1 ? 's' : ''}`;
+            if (badge) {
+                badge.innerText = badgeText;
+            } else {
+                itemUI.innerHTML += `<span class="badge">${badgeText}</span>`;
+            }
         }
+        
+        checkSavedSegmentUI();
+        const selectBox = document.getElementById('savedSegmentsSelect');
+        if (selectBox) selectBox.selectedIndex = selectBox.options.length - 1;
     };
 
+    document.getElementById('btnDeleteSegment').addEventListener('click', async () => {
+        const segs = savedSegments[currentEpKey];
+        const selectBox = document.getElementById('savedSegmentsSelect');
+        if (segs && segs.length > 0 && selectBox) {
+            const ans = prompt('请输入"确认删除"以确认删除该片段:');
+            if (ans !== '确认删除') return;
+
+            const index = selectBox.value;
+            segs.splice(index, 1);
+            
+            if (segs.length === 0) {
+                delete savedSegments[currentEpKey];
+            }
+            
+            await syncToServer();
+            
+            const safeId = 'ep-' + currentEpKey.replace(/[^a-zA-Z0-9]/g, '-');
+            const itemUI = document.getElementById(safeId);
+            if (itemUI) {
+                const badge = itemUI.querySelector('.badge');
+                if (badge) {
+                    if (!savedSegments[currentEpKey]) {
+                        badge.remove();
+                    } else {
+                        badge.innerText = `${segs.length} Save${segs.length > 1 ? 's' : ''}`;
+                    }
+                }
+            }
+            
+            checkSavedSegmentUI();
+            
+            if (savedSegments[currentEpKey] && savedSegments[currentEpKey].length > 0) {
+                document.getElementById('btnPlaySaved').click();
+            } else {
+                isLooping = false;
+                const loopBtn = document.getElementById('btnToggleLoop');
+                if (loopBtn) {
+                    loopBtn.innerText = "Loop OFF";
+                    loopBtn.style.background = "#28a745";
+                }
+                player.pause();
+            }
+        }
+    });
+
     document.getElementById('btnPlaySaved').addEventListener('click', () => {
-        const data = savedSegments[currentEpKey];
-        if (data) {
+        const segs = savedSegments[currentEpKey];
+        const selectBox = document.getElementById('savedSegmentsSelect');
+        if (segs && segs.length > 0 && selectBox) {
+            const data = segs[selectBox.value];
+            if (!data) return;
             loopStart = data.start;
             loopEnd = data.end;
             updateLoopInputs();
@@ -438,8 +536,11 @@
             e.target.className = "btn secondary btn-sm";
             navUI.style.display = "none";
 
-            const data = savedSegments[currentEpKey];
-            if (data) {
+            const segs = savedSegments[currentEpKey];
+            const selectBox = document.getElementById('savedSegmentsSelect');
+            if (segs && segs.length > 0 && selectBox) {
+                const data = segs[selectBox.value];
+                if (!data) return;
                 loopStart = data.start;
                 loopEnd = data.end;
                 updateLoopInputs();
@@ -450,14 +551,19 @@
     });
 
     document.getElementById('subChunkDuration').addEventListener('change', () => {
-        if (currentEpKey && savedSegments[currentEpKey]) {
-            const data = savedSegments[currentEpKey];
+        const segs = savedSegments[currentEpKey];
+        const selectBox = document.getElementById('savedSegmentsSelect');
+        if (currentEpKey && segs && segs.length > 0 && selectBox) {
+            const data = segs[selectBox.value];
+            if (!data) return;
             generateSubChunksFromSaved(data.start, data.end);
             if (isSubChunkMode) {
                 applySubChunk();
             }
         }
     });
+
+    // Removed auto-play on select change
 
     // --- Utilities & Hotkeys ---
     document.getElementById('btnMinus').addEventListener('click', () => player.currentTime = Math.max(0, player.currentTime - 1));
