@@ -298,15 +298,16 @@
         currentSubtitles = [];
         document.getElementById('subChunkControls').style.display = 'none';
 
-        const isIelts = ep.key.includes('雅思') || (ep.video && ep.video.includes('雅思'));
-        if (ep.enSrt) addRemoteTrack(ep.enSrt, 'en', 'English', isIelts);
-        if (ep.cnSrt) addRemoteTrack(ep.cnSrt, 'zh', 'Bilingual', isIelts);
+        const shouldPushUp = ep.key.includes('雅思') || ep.key.toUpperCase().includes('PTE') || 
+                             (ep.video && (ep.video.includes('雅思') || ep.video.toUpperCase().includes('PTE')));
+        if (ep.enSrt) addRemoteTrack(ep.enSrt, 'en', 'English', shouldPushUp);
+        if (ep.cnSrt) addRemoteTrack(ep.cnSrt, 'zh', 'Bilingual', shouldPushUp);
 
         player.play();
         setTimeout(applySubtitleSelection, 300);
     }
 
-    function addRemoteTrack(url, lang, label, isIelts) {
+    function addRemoteTrack(url, lang, label, shouldPushUp) {
         fetch(url).then(r => r.text()).then(text => {
             if (lang === 'en' || currentSubtitles.length === 0) {
                 currentSubtitles = parseSrtToArray(text);
@@ -315,16 +316,16 @@
             track.kind = 'subtitles';
             track.srclang = lang;
             track.label = label;
-            track.src = srtToVtt(text, isIelts);
+            track.src = srtToVtt(text, shouldPushUp);
             player.appendChild(track);
         });
     }
 
-    function srtToVtt(srtText, isIelts) {
+    function srtToVtt(srtText, shouldPushUp) {
         let vttText = "WEBVTT\n\n";
         let processedText = srtText.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2');
         processedText = processedText.replace(/\{[^}]+\}/g, '');
-        if (isIelts) {
+        if (shouldPushUp) {
             // Append invisible blank lines to push text upwards while preserving native wrapping
             processedText = processedText.replace(/\r?\n\r?\n/g, '\n&nbsp;\n&nbsp;\n&nbsp;\n\n');
         }
@@ -601,7 +602,7 @@
 
     function getCurrentSubtitleIndex() {
         const time = player.currentTime;
-        return currentSubtitles.findIndex(s => time >= s.start && time <= s.end);
+        return currentSubtitles.findIndex(s => time >= s.start && time < s.end);
     }
 
     function jumpToSentence(index) {
