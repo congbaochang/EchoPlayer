@@ -11,7 +11,7 @@ import (
 
 // Define target directories to scan
 var targetFolders = []string{
-	//`F:\baidunetdisk\S01`,
+	`F:\baidunetdisk\IELTS`,
 }
 
 func main() {

@@ -107,6 +107,31 @@ video {
 .btn.warning { background: #ffc107; color: black; }
 .btn.success { background: #28a745; }
 
+/* Subtitle toggle buttons */
+.sub-toggle-group {
+    background: #f0f2f5;
+    border-radius: 8px;
+    padding: 3px;
+    gap: 3px !important;
+}
+.sub-toggle {
+    background: transparent !important;
+    color: #555 !important;
+    border: none !important;
+    border-radius: 5px !important;
+    font-weight: 600;
+    transition: all 0.2s ease;
+}
+.sub-toggle:hover {
+    background: rgba(0,123,255,0.08) !important;
+    color: #007bff !important;
+}
+.sub-toggle.active {
+    background: #007bff !important;
+    color: #fff !important;
+    box-shadow: 0 2px 8px rgba(0,123,255,0.35);
+}
+
 .manual-time {
     width: 60px;
     padding: 6px;

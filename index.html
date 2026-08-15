@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>EchoPlayer Pro | Shadowing Tool</title>
-    <link rel="stylesheet" href="assets/index.css?v=1.32">
+    <link rel="stylesheet" href="assets/index.css?v=1.33">
 </head>
 <body>
 
@@ -20,10 +20,21 @@
     <video id="player" controls playsinline></video>
 
     <div id="intensiveDashboard" class="shadowing-dashboard" style="display: none;">
-        <div class="status-left">
-            <strong>📍 Active Segment:</strong> <span id="savedTimeTxt">--:--</span>
+        <div class="status-left" style="display: flex; align-items: center; gap: 5px;">
+            <strong>📍 Saved Segments:</strong>
+            <select id="savedSegmentsSelect" class="btn secondary btn-sm" style="margin: 0; padding: 4px; border-radius: 4px; border: 1px solid #ccc; background: white; color: #333; max-width: 150px; cursor: pointer;">
+            </select>
+            <button id="btnDeleteSegment" class="btn secondary btn-sm" style="margin: 0; padding: 4px 8px;" title="Delete current segment">🗑️</button>
         </div>
         <div id="subChunkControls" style="display: none; align-items: center; gap: 10px; justify-content: center; flex-wrap: wrap;">
+            <select id="subChunkDuration" class="btn secondary btn-sm" style="margin: 0; padding: 4px; border-radius: 4px; border: 1px solid #ccc; background: white; color: #333;">
+                <option value="10">10s</option>
+                <option value="15">15s</option>
+                <option value="20">20s</option>
+                <option value="30" selected>30s</option>
+                <option value="45">45s</option>
+                <option value="60">60s</option>
+            </select>
             <button class="btn secondary btn-sm" id="btnToggleSubMode" style="margin: 0;">🧩 Micro-Loop: OFF</button>
             <div id="subChunkNav" class="status-center" style="display: none; margin: 0; padding: 4px 15px;">
                 <span id="subChunkInfo" style="color: #28a745; font-weight: bold; font-size: 13px;">0 / 0</span>
@@ -70,11 +81,11 @@
             </div>
 
             <div style="border-top: 1px solid #ddd; margin-top: 10px; padding-top: 10px;">
-                <select id="subSelector" style="width: 100%; padding: 5px; margin-bottom: 10px;">
-                    <option value="none">No Subtitles</option>
-                    <option value="en" selected>English</option>
-                    <option value="bilingual">Bilingual</option>
-                </select>
+                <div class="btn-group-row btn-group-row-3 sub-toggle-group" style="margin-bottom: 10px;">
+                    <button class="btn sub-toggle" data-sub="none">🚫 No Sub</button>
+                    <button class="btn sub-toggle active" data-sub="en">🇬🇧 English</button>
+                    <button class="btn sub-toggle" data-sub="bilingual">🌐 Bilingual</button>
+                </div>
                 <div class="btn-group-row btn-group-row-3">
                     <button class="btn secondary" id="btnMinus">-1 Sec</button>
                     <button class="btn secondary" id="btnPlus">+1 Sec</button>
@@ -118,7 +129,7 @@
     // --- SRT Parsing Logic ---
     function parseSrtToArray(srtText) {
         const subs = [];
-        const regex = /(\d{2}:\d{2}:\d{2},\d{3}) --> (\d{2}:\d{2}:\d{2},\d{3})/g;
+        const regex = /(\d{2}:\d{2}:\d{2}[.,]\d{3}) --> (\d{2}:\d{2}:\d{2}[.,]\d{3})/g;
         let match;
         while ((match = regex.exec(srtText)) !== null) {
             subs.push({
@@ -138,18 +149,19 @@
     function generateSubChunksFromSaved(rangeStart, rangeEnd) {
         subChunks = [];
         const relevantSubs = currentSubtitles.filter(s => s.start >= rangeStart && s.end <= rangeEnd);
+        const targetDuration = parseInt(document.getElementById('subChunkDuration').value, 10) || 30;
 
         if (relevantSubs.length === 0) {
-            for (let t = rangeStart; t < rangeEnd; t += 30) {
-                subChunks.push({ start: t, end: Math.min(t + 30, rangeEnd) });
+            for (let t = rangeStart; t < rangeEnd; t += targetDuration) {
+                subChunks.push({ start: t, end: Math.min(t + targetDuration, rangeEnd) });
             }
         } else {
             let chunkStart = rangeStart;
-            const TARGET = 30;
             for (let i = 0; i < relevantSubs.length; i++) {
-                if (relevantSubs[i].end - chunkStart >= TARGET || i === relevantSubs.length - 1) {
-                    subChunks.push({ start: chunkStart, end: relevantSubs[i].end });
-                    if (i < relevantSubs.length - 1) chunkStart = relevantSubs[i+1].start;
+                if (relevantSubs[i].end - chunkStart >= targetDuration || i === relevantSubs.length - 1) {
+                    let chunkEnd = (i === relevantSubs.length - 1) ? rangeEnd : relevantSubs[i].end;
+                    subChunks.push({ start: chunkStart, end: chunkEnd });
+                    chunkStart = chunkEnd;
                 }
             }
         }
@@ -202,7 +214,15 @@
         statusTxt.innerText = "⏳ Synchronizing with Server...";
         try {
             const dataRes = await fetch('/api/segments/get');
-            savedSegments = await dataRes.json();
+            const rawSegments = await dataRes.json();
+            savedSegments = {};
+            for (let key in rawSegments) {
+                if (Array.isArray(rawSegments[key])) {
+                    savedSegments[key] = rawSegments[key];
+                } else if (rawSegments[key] && typeof rawSegments[key] === 'object') {
+                    savedSegments[key] = [rawSegments[key]];
+                }
+            }
             const listRes = await fetch('/api/list');
             const categories = await listRes.json();
             renderPlaylist(categories);
@@ -247,8 +267,9 @@
                 const div = document.createElement('div');
                 div.className = 'ep-item';
                 div.id = 'ep-' + ep.key.replace(/[^a-zA-Z0-9]/g, '-');
-                const hasSave = savedSegments[ep.key];
-                const badgeHtml = hasSave ? `<span class="badge">Has Save</span>` : '';
+                const segs = savedSegments[ep.key];
+                const hasSave = segs && segs.length > 0;
+                const badgeHtml = hasSave ? `<span class="badge">${segs.length} Save${segs.length > 1 ? 's' : ''}</span>` : '';
                 div.innerHTML = `<span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">🎬 ${ep.key}</span>${badgeHtml}`;
 
                 div.onclick = (e) => {
@@ -265,11 +286,33 @@
         });
     }
 
+    let currentSessionId = 0;
+    let currentBlobUrls = [];
+    let currentSubMode = 'en';
+
+    function clearOldTracks() {
+        currentBlobUrls.forEach(url => URL.revokeObjectURL(url));
+        currentBlobUrls = [];
+
+        const oldTracks = player.querySelectorAll('track');
+        oldTracks.forEach(t => t.remove());
+
+        if (player.textTracks) {
+            for (let i = 0; i < player.textTracks.length; i++) {
+                player.textTracks[i].mode = 'disabled';
+            }
+        }
+    }
+
     // --- Media & Subtitle Management ---
     function playVideo(ep) {
+        currentSessionId++;
+        const thisSession = currentSessionId;
+
         currentEpKey = ep.key;
+        clearOldTracks();
+
         player.src = ep.video;
-        player.innerHTML = '';
         document.getElementById('currentEpTitle').innerText = "Playing: " + ep.key;
 
         // Reset subchunks on new video
@@ -277,47 +320,97 @@
         currentSubtitles = [];
         document.getElementById('subChunkControls').style.display = 'none';
 
-        if (ep.enSrt) addRemoteTrack(ep.enSrt, 'en', 'English');
-        if (ep.cnSrt) addRemoteTrack(ep.cnSrt, 'zh', 'Bilingual');
+        const shouldPushUp = ep.key.includes('雅思') || ep.key.toUpperCase().includes('PTE') || 
+                             (ep.video && (ep.video.includes('雅思') || ep.video.toUpperCase().includes('PTE')));
+        if (ep.enSrt) addRemoteTrack(ep.enSrt, 'en', 'English', shouldPushUp, thisSession);
+        if (ep.cnSrt) addRemoteTrack(ep.cnSrt, 'zh', 'Bilingual', shouldPushUp, thisSession);
 
         player.play();
         setTimeout(applySubtitleSelection, 300);
     }
 
-    function addRemoteTrack(url, lang, label) {
-        fetch(url).then(r => r.text()).then(text => {
-            if (lang === 'en') {
-                currentSubtitles = parseSrtToArray(text);
-            }
-            const track = document.createElement('track');
-            track.kind = 'subtitles';
-            track.srclang = lang;
-            track.label = label;
-            track.src = srtToVtt(text);
-            player.appendChild(track);
-        });
+    function addRemoteTrack(url, lang, label, shouldPushUp, sessionId) {
+        fetch(url, { cache: 'no-store' })
+            .then(r => {
+                if (!r.ok) throw new Error(`HTTP error! status: ${r.status}`);
+                return r.text();
+            })
+            .then(text => {
+                if (sessionId !== currentSessionId) return;
+
+                const parsed = parseSrtToArray(text);
+                if (lang === 'en' || currentSubtitles.length === 0) {
+                    currentSubtitles = parsed;
+                }
+
+                const track = document.createElement('track');
+                track.kind = 'subtitles';
+                track.srclang = lang;
+                track.label = label;
+                const blobUrl = srtToVtt(text, shouldPushUp);
+                currentBlobUrls.push(blobUrl);
+                track.src = blobUrl;
+                track.dataset.session = sessionId;
+
+                track.onload = () => {
+                    if (sessionId === currentSessionId) {
+                        applySubtitleSelection();
+                    }
+                };
+
+                player.appendChild(track);
+                applySubtitleSelection();
+            })
+            .catch(err => {
+                console.error("Failed to load subtitle:", url, err);
+            });
     }
 
-    function srtToVtt(srtText) {
+    function srtToVtt(srtText, shouldPushUp) {
         let vttText = "WEBVTT\n\n";
         let processedText = srtText.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2');
         processedText = processedText.replace(/\{[^}]+\}/g, '');
+        if (shouldPushUp) {
+            // Append invisible blank lines to push text upwards while preserving native wrapping
+            processedText = processedText.replace(/\r?\n\r?\n/g, '\n&nbsp;\n&nbsp;\n&nbsp;\n\n');
+        }
         vttText += processedText;
         return URL.createObjectURL(new Blob([vttText], { type: 'text/vtt' }));
     }
 
     function applySubtitleSelection() {
-        const val = document.getElementById('subSelector').value;
+        const val = currentSubMode;
+        if (!player.textTracks) return;
+
+        const currentTrackElements = Array.from(player.querySelectorAll('track')).filter(
+            t => t.dataset.session == currentSessionId
+        );
+
         for (let i = 0; i < player.textTracks.length; i++) {
             player.textTracks[i].mode = 'disabled';
-            if (val === 'en' && player.textTracks[i].language === 'en') player.textTracks[i].mode = 'showing';
-            if (val === 'bilingual' && player.textTracks[i].language === 'zh') player.textTracks[i].mode = 'showing';
+        }
+
+        if (val === 'none') return;
+
+        for (let i = 0; i < player.textTracks.length; i++) {
+            const tt = player.textTracks[i];
+            const isMatch = (val === 'en' && tt.language === 'en') || (val === 'bilingual' && (tt.language === 'zh' || tt.language === 'bilingual'));
+            const belongsToCurrent = currentTrackElements.some(t => t.track === tt || (t.srclang === tt.language && t.label === tt.label));
+            if (isMatch && belongsToCurrent) {
+                tt.mode = 'showing';
+            }
         }
     }
 
-    // --- Check if element exists before adding listener to avoid errors ---
-    const subSel = document.getElementById('subSelector');
-    if(subSel) subSel.addEventListener('change', applySubtitleSelection);
+    // --- Subtitle toggle buttons ---
+    document.querySelectorAll('.sub-toggle').forEach(btn => {
+        btn.addEventListener('click', function() {
+            document.querySelectorAll('.sub-toggle').forEach(b => b.classList.remove('active'));
+            this.classList.add('active');
+            currentSubMode = this.dataset.sub;
+            applySubtitleSelection();
+        });
+    });
 
     // --- Shadowing Controls ---
     function parseTime(str) {
@@ -360,7 +453,7 @@
 
     player.addEventListener('timeupdate', () => {
         if (isLooping && player.currentTime >= loopEnd && loopEnd > 0) {
-            player.currentTime = loopStart;
+            player.currentTime = loopStart + 0.01;
             player.play();
         }
     });
@@ -368,11 +461,25 @@
     // --- Data Persistence UI ---
     function checkSavedSegmentUI() {
         const dashboard = document.getElementById('intensiveDashboard');
-        const timeTxt = document.getElementById('savedTimeTxt');
+        const selectBox = document.getElementById('savedSegmentsSelect');
 
-        if (currentEpKey && savedSegments[currentEpKey]) {
+        if (currentEpKey && savedSegments[currentEpKey] && savedSegments[currentEpKey].length > 0) {
             dashboard.style.display = 'flex'; // Changed to flex for horizontal layout
-            timeTxt.innerText = `${formatTime(savedSegments[currentEpKey].start)} to ${formatTime(savedSegments[currentEpKey].end)}`;
+            
+            // Retain selected index if possible
+            const prevSelectedIndex = selectBox.selectedIndex;
+            
+            selectBox.innerHTML = '';
+            savedSegments[currentEpKey].forEach((seg, index) => {
+                const opt = document.createElement('option');
+                opt.value = index;
+                opt.innerText = `Seg ${index + 1}: ${formatTime(seg.start)} - ${formatTime(seg.end)}`;
+                selectBox.appendChild(opt);
+            });
+            
+            if (prevSelectedIndex >= 0 && prevSelectedIndex < selectBox.options.length) {
+                selectBox.selectedIndex = prevSelectedIndex;
+            }
         } else {
             dashboard.style.display = 'none';
         }
@@ -380,20 +487,86 @@
 
     document.getElementById('btnSaveSegment').onclick = async () => {
         if (!currentEpKey || loopStart < 0 || loopEnd < 0) return;
-        savedSegments[currentEpKey] = { start: loopStart, end: loopEnd };
+        if (!savedSegments[currentEpKey]) {
+            savedSegments[currentEpKey] = [];
+        }
+        
+        // Prevent duplicate saves
+        const exists = savedSegments[currentEpKey].some(s => Math.abs(s.start - loopStart) < 0.1 && Math.abs(s.end - loopEnd) < 0.1);
+        if (exists) return;
+        
+        savedSegments[currentEpKey].push({ start: loopStart, end: loopEnd });
         await syncToServer();
-        checkSavedSegmentUI();
-
+        
         const safeId = 'ep-' + currentEpKey.replace(/[^a-zA-Z0-9]/g, '-');
         const itemUI = document.getElementById(safeId);
-        if (itemUI && !itemUI.innerHTML.includes('Has Save')) {
-            itemUI.innerHTML += `<span class="badge">Has Save</span>`;
+        if (itemUI) {
+            const badge = itemUI.querySelector('.badge');
+            const segCount = savedSegments[currentEpKey].length;
+            const badgeText = `${segCount} Save${segCount > 1 ? 's' : ''}`;
+            if (badge) {
+                badge.innerText = badgeText;
+            } else {
+                itemUI.innerHTML += `<span class="badge">${badgeText}</span>`;
+            }
         }
+        
+        checkSavedSegmentUI();
+        const selectBox = document.getElementById('savedSegmentsSelect');
+        if (selectBox) selectBox.selectedIndex = selectBox.options.length - 1;
     };
 
+    document.getElementById('btnDeleteSegment').addEventListener('click', async () => {
+        const segs = savedSegments[currentEpKey];
+        const selectBox = document.getElementById('savedSegmentsSelect');
+        if (segs && segs.length > 0 && selectBox) {
+            const ans = prompt('请输入"确认删除"以确认删除该片段:');
+            if (ans !== '确认删除') return;
+
+            const index = selectBox.value;
+            segs.splice(index, 1);
+            
+            if (segs.length === 0) {
+                delete savedSegments[currentEpKey];
+            }
+            
+            await syncToServer();
+            
+            const safeId = 'ep-' + currentEpKey.replace(/[^a-zA-Z0-9]/g, '-');
+            const itemUI = document.getElementById(safeId);
+            if (itemUI) {
+                const badge = itemUI.querySelector('.badge');
+                if (badge) {
+                    if (!savedSegments[currentEpKey]) {
+                        badge.remove();
+                    } else {
+                        badge.innerText = `${segs.length} Save${segs.length > 1 ? 's' : ''}`;
+                    }
+                }
+            }
+            
+            checkSavedSegmentUI();
+            
+            if (savedSegments[currentEpKey] && savedSegments[currentEpKey].length > 0) {
+                document.getElementById('btnPlaySaved').click();
+            } else {
+                isLooping = false;
+                const loopBtn = document.getElementById('btnToggleLoop');
+                if (loopBtn) {
+                    loopBtn.innerText = "Loop OFF";
+                    loopBtn.style.background = "#28a745";
+                }
+                player.pause();
+            }
+        }
+    });
+
     document.getElementById('btnPlaySaved').addEventListener('click', () => {
-        const data = savedSegments[currentEpKey];
-        if (data) {
+        const segs = savedSegments[currentEpKey];
+        const selectBox = document.getElementById('savedSegmentsSelect');
+        if (segs && segs.length > 0 && selectBox) {
+            const data = segs[selectBox.value];
+            if (!data) return;
             loopStart = data.start;
             loopEnd = data.end;
             updateLoopInputs();
@@ -430,8 +603,11 @@
             e.target.className = "btn secondary btn-sm";
             navUI.style.display = "none";
 
-            const data = savedSegments[currentEpKey];
-            if (data) {
+            const segs = savedSegments[currentEpKey];
+            const selectBox = document.getElementById('savedSegmentsSelect');
+            if (segs && segs.length > 0 && selectBox) {
+                const data = segs[selectBox.value];
+                if (!data) return;
                 loopStart = data.start;
                 loopEnd = data.end;
                 updateLoopInputs();
@@ -440,6 +616,21 @@
             }
         }
     });
+
+    document.getElementById('subChunkDuration').addEventListener('change', () => {
+        const segs = savedSegments[currentEpKey];
+        const selectBox = document.getElementById('savedSegmentsSelect');
+        if (currentEpKey && segs && segs.length > 0 && selectBox) {
+            const data = segs[selectBox.value];
+            if (!data) return;
+            generateSubChunksFromSaved(data.start, data.end);
+            if (isSubChunkMode) {
+                applySubChunk();
+            }
+        }
+    });
+
+    // Removed auto-play on select change
 
     // --- Utilities & Hotkeys ---
     document.getElementById('btnMinus').addEventListener('click', () => player.currentTime = Math.max(0, player.currentTime - 1));
@@ -477,13 +668,13 @@
 
     function getCurrentSubtitleIndex() {
         const time = player.currentTime;
-        return currentSubtitles.findIndex(s => time >= s.start && time <= s.end);
+        return currentSubtitles.findIndex(s => time >= s.start && time < s.end);
     }
 
     function jumpToSentence(index) {
         if (index < 0 || index >= currentSubtitles.length) return;
 
-        player.currentTime = currentSubtitles[index].start;
+        player.currentTime = currentSubtitles[index].start + 0.01;
 
         if (isSentenceLooping) {
             loopStart = currentSubtitles[index].start;
@@ -500,7 +691,7 @@
         loopEnd = sub.end;
         updateLoopInputs();
 
-        player.currentTime = loopStart;
+        player.currentTime = loopStart + 0.01;
         player.play();
 
         isLooping = true;
