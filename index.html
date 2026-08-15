@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>EchoPlayer Pro | Shadowing Tool</title>
-    <link rel="stylesheet" href="assets/index.css?v=1.32">
+    <link rel="stylesheet" href="assets/index.css?v=1.33">
 </head>
 <body>
 
@@ -81,11 +81,11 @@
             </div>
 
             <div style="border-top: 1px solid #ddd; margin-top: 10px; padding-top: 10px;">
-                <select id="subSelector" style="width: 100%; padding: 5px; margin-bottom: 10px;">
-                    <option value="none">No Subtitles</option>
-                    <option value="en" selected>English</option>
-                    <option value="bilingual">Bilingual</option>
-                </select>
+                <div class="btn-group-row btn-group-row-3 sub-toggle-group" style="margin-bottom: 10px;">
+                    <button class="btn sub-toggle" data-sub="none">🚫 No Sub</button>
+                    <button class="btn sub-toggle active" data-sub="en">🇬🇧 English</button>
+                    <button class="btn sub-toggle" data-sub="bilingual">🌐 Bilingual</button>
+                </div>
                 <div class="btn-group-row btn-group-row-3">
                     <button class="btn secondary" id="btnMinus">-1 Sec</button>
                     <button class="btn secondary" id="btnPlus">+1 Sec</button>
@@ -286,11 +286,33 @@
         });
     }
 
+    let currentSessionId = 0;
+    let currentBlobUrls = [];
+    let currentSubMode = 'en';
+
+    function clearOldTracks() {
+        currentBlobUrls.forEach(url => URL.revokeObjectURL(url));
+        currentBlobUrls = [];
+
+        const oldTracks = player.querySelectorAll('track');
+        oldTracks.forEach(t => t.remove());
+
+        if (player.textTracks) {
+            for (let i = 0; i < player.textTracks.length; i++) {
+                player.textTracks[i].mode = 'disabled';
+            }
+        }
+    }
+
     // --- Media & Subtitle Management ---
     function playVideo(ep) {
+        currentSessionId++;
+        const thisSession = currentSessionId;
+
         currentEpKey = ep.key;
+        clearOldTracks();
+
         player.src = ep.video;
-        player.innerHTML = '';
         document.getElementById('currentEpTitle').innerText = "Playing: " + ep.key;
 
         // Reset subchunks on new video
@@ -300,25 +322,48 @@
 
         const shouldPushUp = ep.key.includes('雅思') || ep.key.toUpperCase().includes('PTE') || 
                              (ep.video && (ep.video.includes('雅思') || ep.video.toUpperCase().includes('PTE')));
-        if (ep.enSrt) addRemoteTrack(ep.enSrt, 'en', 'English', shouldPushUp);
-        if (ep.cnSrt) addRemoteTrack(ep.cnSrt, 'zh', 'Bilingual', shouldPushUp);
+        if (ep.enSrt) addRemoteTrack(ep.enSrt, 'en', 'English', shouldPushUp, thisSession);
+        if (ep.cnSrt) addRemoteTrack(ep.cnSrt, 'zh', 'Bilingual', shouldPushUp, thisSession);
 
         player.play();
         setTimeout(applySubtitleSelection, 300);
     }
 
-    function addRemoteTrack(url, lang, label, shouldPushUp) {
-        fetch(url).then(r => r.text()).then(text => {
-            if (lang === 'en' || currentSubtitles.length === 0) {
-                currentSubtitles = parseSrtToArray(text);
-            }
-            const track = document.createElement('track');
-            track.kind = 'subtitles';
-            track.srclang = lang;
-            track.label = label;
-            track.src = srtToVtt(text, shouldPushUp);
-            player.appendChild(track);
-        });
+    function addRemoteTrack(url, lang, label, shouldPushUp, sessionId) {
+        fetch(url, { cache: 'no-store' })
+            .then(r => {
+                if (!r.ok) throw new Error(`HTTP error! status: ${r.status}`);
+                return r.text();
+            })
+            .then(text => {
+                if (sessionId !== currentSessionId) return;
+
+                const parsed = parseSrtToArray(text);
+                if (lang === 'en' || currentSubtitles.length === 0) {
+                    currentSubtitles = parsed;
+                }
+
+                const track = document.createElement('track');
+                track.kind = 'subtitles';
+                track.srclang = lang;
+                track.label = label;
+                const blobUrl = srtToVtt(text, shouldPushUp);
+                currentBlobUrls.push(blobUrl);
+                track.src = blobUrl;
+                track.dataset.session = sessionId;
+
+                track.onload = () => {
+                    if (sessionId === currentSessionId) {
+                        applySubtitleSelection();
+                    }
+                };
+
+                player.appendChild(track);
+                applySubtitleSelection();
+            })
+            .catch(err => {
+                console.error("Failed to load subtitle:", url, err);
+            });
     }
 
     function srtToVtt(srtText, shouldPushUp) {
@@ -334,17 +379,38 @@
     }
 
     function applySubtitleSelection() {
-        const val = document.getElementById('subSelector').value;
+        const val = currentSubMode;
+        if (!player.textTracks) return;
+
+        const currentTrackElements = Array.from(player.querySelectorAll('track')).filter(
+            t => t.dataset.session == currentSessionId
+        );
+
         for (let i = 0; i < player.textTracks.length; i++) {
             player.textTracks[i].mode = 'disabled';
-            if (val === 'en' && player.textTracks[i].language === 'en') player.textTracks[i].mode = 'showing';
-            if (val === 'bilingual' && player.textTracks[i].language === 'zh') player.textTracks[i].mode = 'showing';
+        }
+
+        if (val === 'none') return;
+
+        for (let i = 0; i < player.textTracks.length; i++) {
+            const tt = player.textTracks[i];
+            const isMatch = (val === 'en' && tt.language === 'en') || (val === 'bilingual' && (tt.language === 'zh' || tt.language === 'bilingual'));
+            const belongsToCurrent = currentTrackElements.some(t => t.track === tt || (t.srclang === tt.language && t.label === tt.label));
+            if (isMatch && belongsToCurrent) {
+                tt.mode = 'showing';
+            }
         }
     }
 
-    // --- Check if element exists before adding listener to avoid errors ---
-    const subSel = document.getElementById('subSelector');
-    if(subSel) subSel.addEventListener('change', applySubtitleSelection);
+    // --- Subtitle toggle buttons ---
+    document.querySelectorAll('.sub-toggle').forEach(btn => {
+        btn.addEventListener('click', function() {
+            document.querySelectorAll('.sub-toggle').forEach(b => b.classList.remove('active'));
+            this.classList.add('active');
+            currentSubMode = this.dataset.sub;
+            applySubtitleSelection();
+        });
+    });
 
     // --- Shadowing Controls ---
     function parseTime(str) {
